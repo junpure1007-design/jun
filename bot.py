@@ -1,5 +1,5 @@
 """
-アドラー心理学 Discord Bot - 確実送信版
+アドラー心理学 Discord Bot - 確実送信版（UptimeRobot対応）
 """
 
 import discord
@@ -8,8 +8,22 @@ import json
 import random
 import datetime
 import os
+import threading
 from pathlib import Path
+from flask import Flask
 
+# ─── Flask（UptimeRobot用）───────────────────────────────
+app = Flask(__name__)
+
+@app.route("/")
+def health():
+    return "OK", 200
+
+def run_flask():
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
+
+# ─── Bot設定 ─────────────────────────────────────────────
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN", "")
 TIMEZONE_OFFSET = 9
 
@@ -85,14 +99,12 @@ async def scheduler():
     now = get_jst_now()
     date_str = str(now.date())
 
-    # 朝: 6:00?6:10の間に1回だけ送信
     morning_key = f"{date_str}-morning"
     if now.hour == 6 and now.minute <= 10 and morning_key not in sent_keys:
         sent_keys.add(morning_key)
         print(f"[{now}] 朝の送信開始")
         await send_to_all("　 朝", MORNING_MESSAGES)
 
-    # 夕: 18:00?18:10の間に1回だけ送信
     evening_key = f"{date_str}-evening"
     if now.hour == 18 and now.minute <= 10 and evening_key not in sent_keys:
         sent_keys.add(evening_key)
@@ -127,4 +139,8 @@ async def on_message(message):
         )
 
 if __name__ == "__main__":
+    # Flaskを別スレッドで起動
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    print("　 Webサーバー起動完了")
     client.run(DISCORD_TOKEN)

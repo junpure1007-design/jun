@@ -1,5 +1,5 @@
 """
-アドラー心理学 Discord Bot - 固定チャンネル版（複数サーバー対応）
+アドラー心理学 Discord Bot - 固定チャンネル版
 """
 
 import discord
@@ -13,8 +13,6 @@ from pathlib import Path
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN", "")
 TIMEZONE_OFFSET = 9
 
-# ─── 送信先チャンネルIDリスト ─────────────────────────────
-# チャンネルIDを追加するだけで複数チャンネルに送信できます
 CHANNEL_IDS = [
     "1510674681525698754",
     "1510696478123888702",
@@ -29,6 +27,7 @@ MORNING_MESSAGES = [m for m in ALL_MESSAGES if m["time"] == "morning"]
 EVENING_MESSAGES = [m for m in ALL_MESSAGES if m["time"] == "evening"]
 
 sent_today: dict = {}
+sent_keys: set = set()  # 送信済みキー（日付+朝夕）で重複防止
 
 def get_jst_now() -> datetime.datetime:
     utc_now = datetime.datetime.now(datetime.timezone.utc)
@@ -64,6 +63,16 @@ def build_embed(msg: dict, label: str) -> discord.Embed:
     embed.set_footer(text="アドラー心理学ボット")
     return embed
 
+async def send_to_all(label: str, pool: list):
+    for channel_id in CHANNEL_IDS:
+        channel = client.get_channel(int(channel_id))
+        if channel is None:
+            print(f"チャンネルが見つかりません: {channel_id}")
+            continue
+        msg = pick_message(pool, channel_id)
+        await channel.send(embed=build_embed(msg, label))
+        print(f"送信完了 channel={channel_id} id={msg['id']}")
+
 intents = discord.Intents.default()
 intents.message_content = True
 client = discord.Client(intents=intents)
@@ -71,25 +80,21 @@ client = discord.Client(intents=intents)
 @tasks.loop(minutes=1)
 async def scheduler():
     now = get_jst_now()
-    if now.second > 5:
-        return
-    is_morning = now.hour == 6 and now.minute == 0
-    is_evening = now.hour == 18 and now.minute == 0
-    if not (is_morning or is_evening):
-        return
-    for channel_id in CHANNEL_IDS:
-        channel = client.get_channel(int(channel_id))
-        if channel is None:
-            print(f"チャンネルが見つかりません: {channel_id}")
-            continue
-        if is_morning:
-            msg = pick_message(MORNING_MESSAGES, channel_id)
-            await channel.send(embed=build_embed(msg, "　 朝"))
-            print(f"[{now}] 朝送信 channel={channel_id}")
-        else:
-            msg = pick_message(EVENING_MESSAGES, channel_id)
-            await channel.send(embed=build_embed(msg, "　 夕"))
-            print(f"[{now}] 夕送信 channel={channel_id}")
+    date_str = str(now.date())
+
+    # 朝: 6:00?6:05の間に1回だけ送信
+    morning_key = f"{date_str}-morning"
+    if now.hour == 6 and now.minute <= 5 and morning_key not in sent_keys:
+        sent_keys.add(morning_key)
+        print(f"[{now}] 朝の送信開始")
+        await send_to_all("　 朝", MORNING_MESSAGES)
+
+    # 夕: 18:00?18:05の間に1回だけ送信
+    evening_key = f"{date_str}-evening"
+    if now.hour == 18 and now.minute <= 5 and evening_key not in sent_keys:
+        sent_keys.add(evening_key)
+        print(f"[{now}] 夕の送信開始")
+        await send_to_all("　 夕", EVENING_MESSAGES)
 
 @client.event
 async def on_ready():
@@ -115,9 +120,8 @@ async def on_message(message):
             "`!adler` ? 朝のメッセージを今すぐ表示\n"
             "`!adler evening` ? 夕のメッセージを今すぐ表示\n"
             "`!adler-help` ? このヘルプを表示\n\n"
-            "? 自動送信: 毎日 **6:00**（朝）と **18:00**（夕）JST"
+            "? 自動送信: 毎日 **6:00?6:05**（朝）と **18:00?18:05**（夕）JST"
         )
 
 if __name__ == "__main__":
     client.run(DISCORD_TOKEN)
-
